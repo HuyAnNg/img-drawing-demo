@@ -1,103 +1,361 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
+import { cn } from "@/lib/utils";
+import { Upload, X } from "lucide-react";
+import React, { useRef, useState } from "react";
+
+const Home = () => {
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [preview, setPreview] = useState<string | null>(null);
+  const [confirmedImage, setConfirmedImage] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Drawing state
+  const [lines, setLines] = useState<{ points: { x: number; y: number }[] }[]>(
+    []
+  );
+  const [drawing, setDrawing] = useState(false);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const imageRef = useRef<HTMLImageElement>(null);
+  const [connectLines, setConnectLines] = useState(false);
+
+  // Handle file input
+  const handleFile = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      if (e.target?.result) {
+        setPreview(e.target.result as string);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    e.preventDefault();
+    if (e.target.files && e.target.files[0]) {
+      handleFile(e.target.files[0]);
+    }
+  };
+
+  // Drawing handlers
+  const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!canvasRef.current) return;
+    const rect = canvasRef.current.getBoundingClientRect();
+    // Tính tỷ lệ giữa canvas thật và canvas hiển thị
+    const scaleX = canvasRef.current.width / rect.width;
+    const scaleY = canvasRef.current.height / rect.height;
+    const x = (e.clientX - rect.left) * scaleX;
+    const y = (e.clientY - rect.top) * scaleY;
+    setDrawing(true);
+    setLines((prev) => [...prev, { points: [{ x, y }] }]);
+  };
+
+  const handleCanvasMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!drawing || !canvasRef.current) return;
+    const rect = canvasRef.current.getBoundingClientRect();
+    const scaleX = canvasRef.current.width / rect.width;
+    const scaleY = canvasRef.current.height / rect.height;
+    const x = (e.clientX - rect.left) * scaleX;
+    const y = (e.clientY - rect.top) * scaleY;
+    setLines((prev) => {
+      const newLines = [...prev];
+      newLines[newLines.length - 1].points.push({ x, y });
+      return newLines;
+    });
+  };
+
+  const handleCanvasMouseUp = () => {
+    setDrawing(false);
+  };
+
+  // Nối nét đầu với nét cuối bằng chuột phải
+  const handleCanvasContextMenu = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    if (lines.length < 2) return;
+    const first = lines[0].points[0];
+    const lastLine = lines[lines.length - 1];
+    const last = lastLine.points[lastLine.points.length - 1];
+    setLines((prev) => [...prev, { points: [last, first] }]);
+  };
+
+  // Vẽ lại canvas mỗi khi lines hoặc ảnh/thay đổi
+  React.useEffect(() => {
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext("2d");
+    if (!canvas || !ctx || !confirmedImage) return;
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    if (imageRef.current) {
+      ctx.drawImage(imageRef.current, 0, 0, canvas.width, canvas.height);
+    }
+
+    ctx.strokeStyle = "#007BDE";
+    ctx.lineWidth = 6;
+    ctx.lineCap = "round";
+
+    if (connectLines && lines.length > 0) {
+      // Nối tất cả các điểm thành một đường duy nhất
+      ctx.beginPath();
+      lines.forEach((line, lineIdx) => {
+        line.points.forEach((pt, idx) => {
+          if (lineIdx === 0 && idx === 0) ctx.moveTo(pt.x, pt.y);
+          else ctx.lineTo(pt.x, pt.y);
+        });
+      });
+      ctx.stroke();
+    } else {
+      // Vẽ từng nét riêng biệt như cũ
+      lines.forEach((line) => {
+        ctx.beginPath();
+        line.points.forEach((pt, idx) => {
+          if (idx === 0) ctx.moveTo(pt.x, pt.y);
+          else ctx.lineTo(pt.x, pt.y);
+        });
+        ctx.stroke();
+      });
+    }
+  }, [lines, confirmedImage, connectLines]);
+
+  // Confirm image selection
+  const handleConfirm = () => {
+    setConfirmedImage(preview);
+    setDialogOpen(false);
+    setLines([]);
+    // Nếu đã có preview, lấy kích thước luôn từ thẻ img preview
+    if (preview) {
+      const img = document.createElement("img");
+      img.src = preview;
+      img.onload = () => {
+        setImgSize({ width: img.width, height: img.height });
+        imageRef.current = img;
+      };
+      // Nếu ảnh đã cache sẵn, onload có thể không gọi, nên kiểm tra luôn:
+      if (img.complete) {
+        setImgSize({ width: img.width, height: img.height });
+        imageRef.current = img;
+      }
+    }
+  };
+
+  // Cancel and close dialog
+  const handleClose = () => {
+    setPreview(null);
+    if (inputRef.current) inputRef.current.value = "";
+    setDialogOpen(false);
+  };
+
+  // Lấy kích thước ảnh để set canvas
+  const [imgSize, setImgSize] = useState<{
+    width: number;
+    height: number;
+  } | null>(null);
+  React.useEffect(() => {
+    if (!confirmedImage) return;
+    const img = new window.Image();
+    img.src = confirmedImage;
+    img.onload = () => setImgSize({ width: img.width, height: img.height });
+    imageRef.current = img;
+  }, [confirmedImage]);
+
+  // Xóa toàn bộ nét vẽ
+  const handleClearAllLines = () => setLines([]);
+
+  // Xóa nét gần nhất vừa vẽ
+  const handleRemoveLastLine = () => setLines((prev) => prev.slice(0, -1));
+
+  // Xóa toàn bộ ảnh và nét vẽ
+  const handleClearAll = () => {
+    setConfirmedImage(null);
+    setLines([]);
+    setImgSize(null);
+    setPreview(null);
+    if (inputRef.current) inputRef.current.value = "";
+  };
+
+  // Lấy ra các đỉnh (điểm đầu của mỗi nét, bỏ nét cuối nếu là đoạn nối về điểm đầu)
+  const vertices = React.useMemo(() => {
+    if (
+      lines.length > 1 &&
+      lines[lines.length - 1].points.length === 2 &&
+      lines[0].points[0].x === lines[lines.length - 1].points[1].x &&
+      lines[0].points[0].y === lines[lines.length - 1].points[1].y
+    ) {
+      // Đã hoàn thành, bỏ nét nối cuối
+      return lines.slice(0, -1).map((line) => line.points[0]);
+    }
+    return lines.map((line) => line.points[0]);
+  }, [lines]);
+
+  // Nút hoàn thành: nối điểm đầu và cuối
+  const handleCompletePolygon = () => {
+    if (lines.length < 2) return;
+    const first = lines[0].points[0];
+    const lastLine = lines[lines.length - 1];
+    const last = lastLine.points[lastLine.points.length - 1];
+    // Nếu đã khép kín rồi thì không nối nữa
+    if (last.x === first.x && last.y === first.y) return;
+    setLines((prev) => [...prev, { points: [last, first] }]);
+  };
+
   return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm/6 text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-[family-name:var(--font-geist-mono)] font-semibold">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+    <div className="min-h-screen flex flex-col items-center justify-center bg-gray-100 dark:bg-black">
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogTrigger asChild>
+          <Button
+            variant="outline"
+            className="mb-6 dark:bg-[#242424] bg-[#F8FAFC] dark:text-[#7B7B7B] text-black w-[140px] h-10 font-inter text-sm font-medium leading-normal rounded-full border-transparent"
+            onClick={() => setDialogOpen(true)}
+          >
+            Tải ảnh lên
+          </Button>
+        </DialogTrigger>
+        <DialogContent className="sm:max-w-[425px] h-max-content-plus-40 dark:bg-gradient-to-bl from-65% from-black to-100% to-[#007BDE59] p-0 border-none">
+          <div className="flex items-center justify-center p-4">
+            <div className="w-full max-w-md rounded-lg p-2 space-y-6">
+              <h2 className="text-xl dark:text-white text-black font-medium ">
+                Chọn ảnh để tìm kiếm
+              </h2>
+              <div
+                className={cn(
+                  "relative border-2 border-dashed mb-[20px] rounded-lg p-6 transition-colors",
+                  preview ? "p-2" : "aspect-square"
+                )}
+              >
+                <input
+                  ref={inputRef}
+                  type="file"
+                  className="hidden"
+                  onChange={handleChange}
+                  accept="image/*"
+                />
+                {preview ? (
+                  <div className="relative">
+                    <img
+                      src={preview || "/placeholder.svg"}
+                      alt="Preview"
+                      className="w-full h-full object-contain rounded"
+                    />
+                    <Button
+                      variant="secondary"
+                      size="icon"
+                      className="absolute top-2 right-2 rounded-full bg-black/50 hover:bg-black/75"
+                      onClick={() => setPreview(null)}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ) : (
+                  <div
+                    className="h-full flex flex-col items-center justify-center gap-4 cursor-pointer"
+                    onClick={() => inputRef.current?.click()}
+                  >
+                    <div className="p-4 rounded-full">
+                      <Upload className="w-6 h-6 text-gray-400" />
+                    </div>
+                    <p className="text-gray-400">Tải ảnh lên</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+          <div className="bottom-0 w-full">
+            <div className="flex justify-end gap-4 bg-white/10 p-4 backdrop-blur-sm">
+              <Button
+                disabled={!preview}
+                onClick={handleConfirm}
+                className="text-white rounded-xl h-8 w-20"
+              >
+                Xác nhận
+              </Button>
+              <Button
+                onClick={handleClose}
+                className="dark:text-white text-black rounded-xl h-8 w-16 bg-transparent border border-gray-400"
+              >
+                Huỷ
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
+      {/* Hiển thị ảnh và vùng vẽ sau khi xác nhận */}
+      {confirmedImage && imgSize && (
+        <div className="mt-8 flex gap-6 items-start">
+          {/* Vùng ảnh và canvas */}
+          <div className="border rounded shadow-lg bg-white p-4 flex flex-col items-center">
+            <canvas
+              ref={canvasRef}
+              width={imgSize.width}
+              height={imgSize.height}
+              style={{
+                borderRadius: 20,
+                overflow: "hidden",
+                touchAction: "none",
+                cursor: "crosshair",
+                background: "#fff",
+                maxWidth: 400,
+                maxHeight: 400,
+              }}
+              onMouseDown={handleCanvasMouseDown}
+              onMouseMove={handleCanvasMouseMove}
+              onMouseUp={handleCanvasMouseUp}
+              onMouseLeave={handleCanvasMouseUp}
+              onContextMenu={handleCanvasContextMenu}
             />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+            <div className="flex gap-2 mt-4">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleClearAllLines}
+                disabled={lines.length === 0}
+              >
+                Xóa toàn bộ nét
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleRemoveLastLine}
+                disabled={lines.length === 0}
+              >
+                Xóa nét vừa vẽ
+              </Button>
+              <Button size="sm" variant="destructive" onClick={handleClearAll}>
+                Xóa ảnh & nét
+              </Button>
+              <Button
+                size="sm"
+                variant="default"
+                onClick={handleCompletePolygon}
+                disabled={lines.length < 2}
+              >
+                Hoàn thành
+              </Button>
+            </div>
+            {/* Checkbox nối các điểm */}
+            <label className="flex items-center gap-2 mt-4 select-none">
+              <input
+                type="checkbox"
+                checked={connectLines}
+                onChange={(e) => setConnectLines(e.target.checked)}
+              />
+              <span className="text-sm">Nối giữa các điểm vẽ</span>
+            </label>
+          </div>
+          {/* XÓA VÙNG TỌA ĐỘ NÉT VẼ Ở ĐÂY */}
+          {/* Vùng tọa độ các đỉnh */}
+          <div className="border rounded shadow-lg bg-white p-4 w-80 max-h-[400px] overflow-auto">
+            <div className="font-semibold mb-2">Tọa độ các đỉnh</div>
+            <pre className="text-xs text-gray-700 whitespace-pre-wrap break-all">
+              {JSON.stringify(vertices, null, 2)}
+            </pre>
+          </div>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+      )}
     </div>
   );
-}
+};
+
+export default Home;
